@@ -318,7 +318,7 @@ variables:
     level: INTERMEDIATE
     type:
       type: number
-    value: "300000"
+    value: "3600000"
 meta:
   workerGroup: default
   description: "This workflow retrieves performance metrics from Instana over a specified\
