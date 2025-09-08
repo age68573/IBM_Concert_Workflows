@@ -22,8 +22,8 @@ blocks:
         value: $defaultWindowSize
   - name: Function_2
     function: |-
-      $startTimestamp = 1756717200000;
-      $endTimestamp = 1757314803147;
+      $startTimestamp = $FetchTimeWindow.result.startTimestamp;
+      $endTimestamp = $FetchTimeWindow.result.endTimestamp;
 
       if (isNaN($startTimestamp) || isNaN($endTimestamp)) {
           $result = "Error";
