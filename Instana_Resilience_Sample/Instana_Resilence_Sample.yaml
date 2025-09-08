@@ -251,7 +251,7 @@ variables:
     level: INTERMEDIATE
     type:
       type: string
-    value: '"nfr_critical_apps_profile-2"'
+    value: '"Instana Availability NFRs"'
   - name: concertApiKeyAuth
     required: true
     isInput: true
@@ -278,7 +278,7 @@ variables:
     level: INTERMEDIATE
     type:
       type: string
-    value: '"https://it-palsys.instana-k3s.palsys.com.tw/#/application;appId=k-mNkytVS4OvO4mfROB8jg/summary;callsTab=http;latencyTab=overTime"'
+    value: '"instana-k3s.palsys.com.tw"'
   - name: applicationVersion
     required: true
     isInput: true
