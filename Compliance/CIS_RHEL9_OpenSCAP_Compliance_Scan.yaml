@@ -1,0 +1,148 @@
+name: CIS_RHEL9_OpenSCAP_Compliance_Scan
+platform: node
+blocks:
+  - action: comment
+    value: "Run an OpenSCAP compliance scan on an RHEL 9 instance, verifying system\
+      \ security settings against the CIS profile."
+  - action: system/Common/SSH/SSH
+    name: RHEL_OSCAP_Scan
+    inputs:
+      - name: authKey
+        value: $ssh_authentication
+      - name: command
+        value: |-
+          `# 1. Install required packages if they are not already installed
+          dnf install -y openscap-scanner scap-security-guide
+
+          # 2. Check if the SCAP content file exists
+          if [ ! -f /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml ]; then
+            echo "SCAP content not found at /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml"
+            exit 1
+          fi
+
+          # 3. Verify that the CIS profile exists in the SCAP content
+          if ! oscap info /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml | grep -qi "cis"; then
+            echo "CIS profile not found in SCAP content"
+            exit 1
+          fi
+
+          rm -f cis-scan-results.xml
+
+          # 4. Run the OpenSCAP scan using the CIS profile
+          sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_cis --results cis-scan-results.xml /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml | tee oscap_output.log
+
+          # 5. Output the full XML scan results
+          cat cis-scan-results.xml
+
+          # 6. Ensure proper file permissions on the results file
+          chmod 0644 cis-scan-results.xml
+          `
+      - name: connectionPool
+        value: "false"
+      - name: timeout
+        value: "2000"
+  - action: comment
+    value: Retrieve the XML scan results from the RHEL instance after the OpenSCAP
+      scan completes.
+  - action: system/Common/SFTP/SFTP Get File
+    name: Get_File
+    inputs:
+      - name: authKey
+        value: $ssh_authentication
+      - name: file
+        value: $file_name
+  - action: assign
+    name: Get_File_Content
+    variable: $xml_file
+    value: $Get_File.result
+  - action: comment
+    value: Upload the compliance scan results to the Concert platform for compliance
+      tracking and further analysis.
+  - action: system/IBM/Concert/Import Data/Upload Files to Concert
+    name: Upload_RHEL_Scan_results
+    inputs:
+      - name: authKey
+        value: $concert_auth
+      - name: file
+        value: |-
+          {
+              "filename": $xml_file,
+              "data_type": $data_type
+          }
+      - name: fileType
+        value: $file_type
+  - action: assign
+    name: Upload_result
+    variable: $result
+    value: $Upload_RHEL_Scan_results.result
+variables:
+  - name: xml_file
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: any
+    value: '""'
+  - name: file_name
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"cis-scan-results.xml"'
+  - name: data_type
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"compliance_posture"'
+  - name: file_type
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"xml"'
+  - name: concert_auth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"Hub"'
+    meta:
+      authType: IBM/ConcertAPIKey
+      subType: authentication
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: any
+    value: '""'
+  - name: ssh_authentication
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"10-107-85-89"'
+    meta:
+      authType: Common/SSH
+      subType: authentication
+meta:
+  workerGroup: default
+  description: "This workflow automates the CIS compliance scan for RHEL 9 using OpenSCAP,\
+    \ ensuring security compliance based on CIS benchmarks. The scan results are retrieved\
+    \ and uploaded into Concert for analysis."
+  layout: flow
+  version: 5
+finally: null

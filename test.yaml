@@ -1,0 +1,31 @@
+name: test
+platform: node
+blocks:
+  - action: system/IBM/Instana/API Token/Get All API Tokens
+    name: IBM_2
+    inputs:
+      - name: authKey
+        value: '"ibmconcert/Instana"'
+  - action: system/IBM/Concert/Application Definitions/List All Application Definitions
+    name: IBM_1
+    inputs:
+      - name: authKey
+        value: '"ibmconcert/Hub"'
+  - action: assign
+    name: Assign_1
+    variable: $result
+    value: $IBM_1
+variables:
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: any
+    value: '""'
+meta:
+  workerGroup: default
+  layout: flow
+  version: 5
+finally: null

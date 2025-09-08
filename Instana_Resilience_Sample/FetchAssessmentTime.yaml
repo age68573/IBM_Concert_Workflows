@@ -1,0 +1,131 @@
+name: FetchAssessmentTime
+platform: node
+blocks:
+  - action: system/Common/Config Data/Get Config Data
+    name: GetConfigData_1
+    inputs:
+      - name: authKey
+        value: $concertConfigAuth
+  - action: comment
+    value: Fetch time window for a given application and source system
+  - action: system/Common/HTTP/HTTP Request
+    name: HTTPRequest_1
+    inputs:
+      - name: method
+        value: '"GET"'
+      - name: host
+        value: $GetConfigData_1.result.concert_host
+      - name: protocol
+        value: '"https"'
+      - name: port
+        value: $GetConfigData_1.result.concert_port
+      - name: path
+        value: '"resilience/grader/api/v1/last_received_timestamps"'
+      - name: query
+        value: |-
+          {
+              "origin": $origin,
+              "origin_name" : $origin_name,
+              "profile_name": $profileName,
+              "target_type": "app",
+              "target ": $applicationName
+          }
+      - name: headers
+        value: |-
+          {
+              "InstanceId": $GetConfigData_1.result.concert_instance_id
+          }
+      - name: bodyEncoding
+        value: '"default"'
+      - name: authKey
+        value: $concertAPIKey
+  - name: Function_1
+    function: "function isEmpty(value) {\n  return value === null || value === undefined\
+      \ || value === '' || (typeof value === 'object' && Object.keys(value).length\
+      \ === 0);\n}\n\nlet startTime = $HTTPRequest_1.result.last_received_ts;\nlet\
+      \ endTime = $HTTPRequest_1.result.current_ts;\n\n/* \n If last received time\
+      \ is null and current time is returned \n then this indicates that there is\
+      \ no data for that source system\n and application and so start time will be\
+      \ computed \n using configured default time window\n*/\nif(!isEmpty(endTime))\
+      \ {\n    if(isEmpty(startTime)) {\n        startTime = new Date(endTime).getTime()\
+      \ - $defaultWindowSize;\n    }\n}\n\n$result = {\n    \"startTimestamp\": new\
+      \ Date(startTime).getTime(),\n    \"endTimestamp\": new Date(endTime).getTime()\n\
+      }"
+variables:
+  - name: concertAPIKey
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+    meta:
+      authType: Common/APIKey
+      subType: authentication
+  - name: concertConfigAuth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+    meta:
+      authType: Common/ConfigData
+      subType: authentication
+  - name: applicationName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: profileName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: origin
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: origin_name
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: defaultWindowSize
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "0"
+meta:
+  workerGroup: default
+  description: "This flow will query Resilience API to fetch last assessment time\
+    \ and current time for a given profile,application and source system"
+  layout: flat
+  version: 5
+finally: null

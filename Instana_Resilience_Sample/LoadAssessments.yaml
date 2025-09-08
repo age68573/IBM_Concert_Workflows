@@ -1,0 +1,169 @@
+name: LoadAssessments
+platform: node
+blocks:
+  - action: comment
+    value: Prepare the data for Resilience evaluate API
+  - action: assign
+    name: PrepareData
+    variable: $assessment_data
+    value: |2-
+        {
+          "timestamp": new Date($timestamp).toISOString(),
+          "version": $applicationVersion,
+          "profile": $profileName,
+          "target_type": "app",
+          "target": $applicationName,
+          "origin" : $origin,
+          "custom_metadata": {
+            "origin_name": $origin_name,
+            "origin_url" : $origin_url
+          },
+          "data": $data
+      }
+  - action: comment
+    value: Fetch Concert instance details
+  - action: system/Common/Config Data/Get Config Data
+    name: GetConfigData_1
+    inputs:
+      - name: authKey
+        value: $concert_config_auth
+  - action: comment
+    value: Generate assessments for Resilience
+  - action: system/Common/HTTP/HTTP Request
+    name: HTTPRequest_1
+    inputs:
+      - name: method
+        value: '"POST"'
+      - name: host
+        value: $GetConfigData_1.result.concert_host
+      - name: protocol
+        value: '"https"'
+      - name: port
+        value: $GetConfigData_1.result.concert_port
+      - name: path
+        value: '"/resilience/assessment/api/v1/evaluate"'
+      - name: headers
+        value: |-
+          {
+              "Content-Type": "application/json",
+              "InstanceId": $GetConfigData_1.result.concert_instance_id
+          }
+      - name: body
+        value: $assessment_data
+      - name: bodyEncoding
+        value: '"default"'
+      - name: authKey
+        value: $concert_api_key_auth
+  - action: assign
+    name: Assign_1
+    variable: $result
+    value: $HTTPRequest_1.result
+variables:
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: any
+    value: '""'
+  - name: applicationName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: profileName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: data
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: timestamp
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "0"
+  - name: concert_config_auth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+    meta:
+      authType: Common/ConfigData
+      subType: authentication
+  - name: origin_name
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: origin_url
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: concert_api_key_auth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+    meta:
+      authType: Common/APIKey
+      subType: authentication
+  - name: applicationVersion
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: origin
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: assessment_data
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+meta:
+  workerGroup: default
+  description: This workflow is used to generate Assessments for Resilience
+  layout: flat
+  version: 5
+finally: null

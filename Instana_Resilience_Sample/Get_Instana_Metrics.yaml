@@ -1,0 +1,337 @@
+name: Get_Instana_Metrics
+platform: node
+blocks:
+  - action: comment
+    value: Instana APIs need the window size to fetch metrics
+  - action: assign
+    name: ComputeWindowSize
+    variable: $windowSize
+    value: $endTimestamp - $startTimestamp
+  - action: comment
+    value: Get Application Id from application name to use in all APIs
+  - action: system/IBM/Instana/Application Resources/Get Applications
+    name: FetchApplicationId
+    inputs:
+      - name: authKey
+        value: $instana_auth
+      - name: nameFilter
+        value: $applicationName
+      - name: applicationBoundaryScope
+        value: '"ALL"'
+  - action: assign
+    name: SetApplicationId
+    variable: $applicationId
+    value: "$FetchApplicationId.result.items[0].id"
+  - action: comment
+    value: "Fetch application, website, synthetic and SLO metrics from Instana"
+  - name: Split_1
+    action: split
+    branches:
+      - blocks:
+          - action: try
+            name: Try_1
+            try:
+              - action: system/IBM/Instana/Application Metrics/Get Application Metrics
+                name: IBM_1
+                inputs:
+                  - name: authKey
+                    value: $instana_auth
+                  - name: Body
+                    value: |-
+                      {
+                          "applicationId": $applicationId,
+
+                          "metrics": [{
+                              "aggregation": "PER_SECOND",
+                              "metric": "calls"
+                          }, {
+                              "aggregation": "MEAN",
+                              "metric": "errors"
+                          }, {
+                              "aggregation": "MEAN",
+                              "metric": "latency"
+                          }],
+                          "timeFrame": {
+                              "to": $endTimestamp,
+                              "windowSize": $windowSize
+                          }
+                      }
+              - action: assign
+                name: Assign_2
+                variable: $applicationMetrics
+                value: $IBM_1.result
+            catch: []
+      - blocks:
+          - action: try
+            name: Try_2
+            try:
+              - action: system/IBM/Instana/Synthetic Metrics/Get Synthetic Metrics
+                name: IBM_2
+                inputs:
+                  - name: authKey
+                    value: $instana_auth
+                  - name: Body
+                    value: |-
+                      {
+                          "metrics": [{
+                              "aggregation": "SUM",
+                              "metric": "synthetic.successRate"
+                          }],
+                          "timeFrame": {
+                              "to": $endTimestamp,
+                              "windowSize": $windowSize
+                          },
+                          "disableDefaultGroups": "false",
+
+                          "tagFilterExpression": {
+                              "type": "EXPRESSION",
+                              "logicalOperator": "AND",
+
+                              "elements": [{
+                                  "name": "synthetic.applicationId",
+                                  "stringValue": $applicationId,
+                                  "operator": "EQUALS"
+                              }]
+                          }
+                      }
+              - action: assign
+                name: Assign_3
+                variable: $syntheticMetrics
+                value: $IBM_2.result
+              - action: comment
+                value: Check if the API call was successful
+              - action: if
+                name: If_1
+                condition: Array.isArray($IBM_2.result.metricsResult)
+                then: []
+                else:
+                  - action: assign
+                    name: Assign_5
+                    variable: $syntheticMetrics.metricsResult
+                    value: "[]"
+            catch: []
+      - blocks:
+          - action: try
+            name: Try_3
+            try:
+              - action: system/IBM/Instana/Website Metrics/Get Beacon Metrics
+                name: IBM_3
+                inputs:
+                  - name: authKey
+                    value: $instana_auth
+                  - name: Body
+                    value: |-
+                      {
+                          "metrics": [{
+                              "metric": "pageViews",
+                              "aggregation": "SUM"
+                          }],
+                          "tagFilterExpression": {
+                              "type": "TAG_FILTER",
+                              "name": "beacon.website.name",
+                              "operator": "EQUALS",
+                              "entity": "NOT_APPLICABLE",
+                              "value": $webApplicationName
+                          },
+                          "timeFrame": {
+                              "to": $endTimestamp,
+                              "windowSize": $windowSize
+                          },
+                          "type": "PAGELOAD"
+                      }
+              - action: assign
+                name: Assign_4
+                variable: $webApplicationMetrics
+                value: $IBM_3.result
+            catch: []
+      - blocks:
+          - action: try
+            name: Try_4
+            try:
+              - action: system/IBM/Instana/Service Levels Objective(SLO) Configurations/Get
+                  All SLO Configs
+                name: IBM_4
+                inputs:
+                  - name: authKey
+                    value: $instana_auth
+                  - name: entityType
+                    value: '"application"'
+              - name: Function_1
+                function: |-
+                  function isEmpty(obj) {
+                      return Object.keys(obj).length === 0 && obj.constructor === Object;
+                  };
+
+                  function removeElements(array, conditionFn) {
+                      return array.filter(conditionFn);
+                  }
+
+                  var filteredArray = [];
+
+                  if (!isEmpty($IBM_4.result)) {
+                      const sloMetrics = $IBM_4.result;
+                      filteredArray = removeElements(sloMetrics.items, item => item.entity.applicationId === $applicationId);
+                  }
+
+                  $filteredSloMetrics = {
+                      "items": filteredArray
+                  }
+              - action: foreach
+                name: ForEach_1
+                list: $filteredSloMetrics.items
+                blocks:
+                  - action: system/IBM/Instana/Service Levels Objective(SLO) Report/Generate
+                      Service Levels Report
+                    name: IBM_5
+                    inputs:
+                      - name: authKey
+                        value: $instana_auth
+                      - name: sloId
+                        value: $ForEach_1.item.id
+                      - name: from
+                        value: $startTimestamp
+                      - name: to
+                        value: $endTimestamp
+                  - action: system/Common/Array/Array Push
+                    name: ArrayPush_1
+                    inputs:
+                      - name: array
+                        value: $sloMetricsArray
+                      - name: item
+                        value: |-
+                          {
+                              sloConfig: $ForEach_1.item,
+                              sloReport: $IBM_5.result
+                          }
+            catch: []
+  - action: comment
+    value: Consolidate the metrics from all the APIs to further processing
+  - action: assign
+    name: Assign_1
+    variable: $result
+    value: |-
+      {
+          "application_metrics": $applicationMetrics,
+          "synthetic_metrics": $syntheticMetrics,
+          "website_metrics": $webApplicationMetrics,
+
+          "slo_metrics": {
+              "items": $sloMetricsArray
+          }
+      }
+variables:
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: applicationName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: endTimestamp
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "0"
+  - name: instana_auth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+    meta:
+      authType: IBM/Instana
+      subType: authentication
+  - name: applicationId
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: startTimestamp
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "0"
+  - name: webApplicationName
+    required: false
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: windowSize
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "0"
+  - name: filteredSloMetrics
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: sloMetricsArray
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: array
+    value: "[]"
+  - name: applicationMetrics
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: syntheticMetrics
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: webApplicationMetrics
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+meta:
+  workerGroup: default
+  description: "This workflow retrieves performance metrics from Instana over a specified\
+    \ time period, calculates availability and error rates, and sends to the main\
+    \ flow"
+  layout: flow
+  version: 5
+finally: null
