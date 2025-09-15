@@ -1,0 +1,40 @@
+name: k8stest
+platform: node
+blocks:
+  - action: system/Kubernetes/getAppsAPIGroup
+    name: Kubernetes_2
+    inputs:
+      - name: authKey
+        value: '"ibmconcert/k8s"'
+  - action: system/Kubernetes/apps_v1/listAppsV1StatefulSetForAllNamespaces
+    name: Kubernetes_1
+    inputs:
+      - name: authKey
+        value: '"ibmconcert/k8s"'
+  - action: system/Kubernetes/KubernetesHttpRequest
+    name: Kubernetes_3
+    inputs:
+      - name: authKey
+        value: '"ibmconcert/k8s"'
+      - name: method
+        value: '"GET"'
+      - name: path
+        value: '`/apis/networking.k8s.io/v1/namespaces/default/ingresses`'
+  - action: assign
+    name: Assign_1
+    variable: $result
+    value: $Kubernetes_3
+variables:
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: any
+    value: '""'
+meta:
+  workerGroup: default
+  layout: flow
+  version: 5
+finally: null

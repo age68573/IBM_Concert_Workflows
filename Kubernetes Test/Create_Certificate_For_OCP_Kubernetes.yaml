@@ -1,0 +1,356 @@
+name: Create_Certificate_For_OCP_Kubernetes
+platform: node
+blocks:
+  - name: ExtractAccessPoint
+    function: |-
+      function extractHostFromObject(object, systemType) {
+          if (systemType == "ocp") {
+              if (object && typeof object === "object" && object.spec && object.spec.host) {
+                  return object.spec.host;
+              }
+          }
+
+          if (systemType == "kubernetes") {
+              if (object && object.spec && Array.isArray(object.spec.rules) && object.spec.rules.length > 0)
+                  return object.spec.rules[0].host;
+          }
+      };
+
+      $accessPointHost = extractHostFromObject($namespaceResource, $systemType)
+  - action: comment
+    value: Add metadata based upon system type and api server
+  - action: assign
+    name: AssignMetadata
+    variable: $metadata
+    value: |-
+      {
+          "source": `${$systemType}`,
+          "api_server": $apiServer
+      }
+  - action: if
+    name: AccessPointCheck
+    condition: $accessPointHost != ""
+    then:
+      - action: comment
+        value: Inspect the certificate
+      - action: system/Common/OpenSSL/Get SSL Certificate
+        name: GetCertificateDetails
+        inputs:
+          - name: url
+            value: $accessPointHost
+          - name: port
+            value: $defaultPort
+      - action: comment
+        value: Check for the protocol
+      - action: if
+        name: CheckRouteProtocol
+        condition: typeof $namespaceResource.spec.tls === "object" && Object.keys($namespaceResource.spec.tls).length
+          > 0
+        then:
+          - action: assign
+            name: AssignRouteProtocol
+            variable: $routeProtocol
+            value: '"https"'
+        else:
+          - action: continue
+      - action: assign
+        name: CreateAccessPointObject
+        variable: $accesspointObject
+        value: |-
+          {
+              "name": $accessPointHost,
+              "is_public": "true",
+              "url": `${$routeProtocol}://${$accessPointHost}:${$defaultPort}`
+          }
+      - action: comment
+        value: Check if certificate object with same serial number already exists
+      - action: if
+        name: ExistingCertCheck
+        condition: $certificateArr.components.some(cert => cert.serial_number ===
+          $GetCertificateDetails.result.serialNumber)
+        then:
+          - action: comment
+            value: Check if the namespace already exists
+          - action: if
+            name: CertNamespaceCheck
+            condition: |-
+              $certificateArr.components.some(
+                  comp => Array.isArray(comp.properties) && comp.properties.some(itemVal => itemVal.name === "namespace" && itemVal.value === $namespace)
+              )
+            then: []
+            else:
+              - name: Function_2
+                function: |-
+                  function createCertificateObject(rawData, metadata, namespace) {
+                      return {
+                          "type": "certificate",
+                          "ref": `certificate:${rawData.serialNumber}`,
+                          "serial_number": rawData.serialNumber,
+
+                          "properties": [{
+                              "name": "subject",
+                              "value": JSON.stringify(rawData.subject)
+                          }, {
+                              "name": "issuer",
+                              "value": JSON.stringify(rawData.issuer)
+                          }, {
+                              "name": "validity_start_date",
+                              "value": convertDateToUTC(rawData.valid_from)
+                          }, {
+                              "name": "validity_end_date",
+                              "value": convertDateToUTC(rawData.valid_to)
+                          }, {
+                              "name": "namespace",
+                              "value": namespace
+                          }, {
+                              "name": "dns_names",
+                              "value": rawData.subjectaltname
+                          }, {
+                              "name": "metadata",
+                              "value": JSON.stringify(metadata)
+                          }],
+                          "access_points": []
+                      };
+                  };
+
+                  function convertDateToUTC(dateString) {
+                      if (!dateString) {
+                          return null;
+                      }
+
+                      const dt = new Date(dateString);
+                      const year = dt.getUTCFullYear();
+                      const month = String(dt.getUTCMonth() + 1).padStart(2, "0");
+                      const day = String(dt.getUTCDate()).padStart(2, "0");
+                      const hours = String(dt.getUTCHours()).padStart(2, "0");
+                      const minutes = String(dt.getUTCMinutes()).padStart(2, "0");
+                      const seconds = String(dt.getUTCSeconds()).padStart(2, "0");
+                      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} +0000 UTC`;
+                  }
+
+                  $result = createCertificateObject($GetCertificateDetails.result, $metadata, $namespace)
+              - action: system/Common/Array/Array Push
+                name: AddNewCertObj
+                inputs:
+                  - name: array
+                    value: $certificateArr.components
+                  - name: item
+                    value: $result
+          - action: comment
+            value: Append the access point to same certificate
+          - name: Function_1
+            function: |-
+              function InsertAccessPoint(existingAccesspoints, accesspoint) {
+                  const exists = existingAccesspoints.some(obj => JSON.stringify(obj) === JSON.stringify(accesspoint));
+
+                  if (!exists) {
+                      existingAccesspoints.push(accesspoint);
+                  }
+
+                  return existingAccesspoints;
+              };
+
+              $certificateArr.components[0].access_points = InsertAccessPoint($certificateArr.components[0].access_points, $accesspointObject)
+        else:
+          - action: comment
+            value: Create new certificate object
+          - name: TransformCertificateObject
+            function: |-
+              function createCertificateObject(rawData, metadata, namespace) {
+                  return {
+                      "type": "certificate",
+                      "ref": `certificate:${rawData.serialNumber}`,
+                      "serial_number": rawData.serialNumber,
+
+                      "properties": [{
+                          "name": "subject",
+                          "value": JSON.stringify(rawData.subject)
+                      }, {
+                          "name": "issuer",
+                          "value": JSON.stringify(rawData.issuer)
+                      }, {
+                          "name": "validity_start_date",
+                          "value": convertDateToUTC(rawData.valid_from)
+                      }, {
+                          "name": "validity_end_date",
+                          "value": convertDateToUTC(rawData.valid_to)
+                      }, {
+                          "name": "namespace",
+                          "value": namespace
+                      }, {
+                          "name": "dns_names",
+                          "value": rawData.subjectaltname
+                      }, {
+                          "name": "metadata",
+                          "value": JSON.stringify(metadata)
+                      }],
+                      "access_points": []
+                  };
+              };
+
+              function convertDateToUTC(dateString) {
+                  if (!dateString) {
+                      return null;
+                  }
+
+                  const dt = new Date(dateString);
+                  const year = dt.getUTCFullYear();
+                  const month = String(dt.getUTCMonth() + 1).padStart(2, "0");
+                  const day = String(dt.getUTCDate()).padStart(2, "0");
+                  const hours = String(dt.getUTCHours()).padStart(2, "0");
+                  const minutes = String(dt.getUTCMinutes()).padStart(2, "0");
+                  const seconds = String(dt.getUTCSeconds()).padStart(2, "0");
+                  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} +0000 UTC`;
+              }
+
+              $result = createCertificateObject($GetCertificateDetails.result, $metadata, $namespace)
+          - action: system/Common/Array/Array Push
+            name: AddAccessPoint
+            inputs:
+              - name: array
+                value: $result.access_points
+              - name: item
+                value: $accesspointObject
+          - action: comment
+            value: Creation of components and dependency for certificates
+          - name: CreateCertificateData
+            action: split
+            branches:
+              - blocks:
+                  - action: system/Common/Array/Array Push
+                    name: CreateDependency
+                    inputs:
+                      - name: array
+                        value: "$certificateArr.dependencies[0].depends_on"
+                      - name: item
+                        value: "`certificate:${$GetCertificateDetails.serialNumber}`"
+              - blocks:
+                  - action: system/Common/Array/Array Push
+                    name: CreateCertArr
+                    inputs:
+                      - name: array
+                        value: $certificateArr.components
+                      - name: item
+                        value: $result
+          - action: comment
+            value: Assign environment details
+          - action: assign
+            name: AddEnvironmement
+            value: "`environment:${$envName}`"
+            variable: "$certificateArr.dependencies[0].ref"
+    else:
+      - action: assign
+        name: AAPNotFoundErr
+        value: |-
+          {
+              "error": "access point not found"
+          }
+        variable: $result
+variables:
+  - name: namespaceResource
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: defaultPort
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "0"
+  - name: apiServer
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: certificateArr
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: systemType
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: envName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: namespace
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: metadata
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: routeProtocol
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: accessPointHost
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: accesspointObject
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: |-
+      {
+          "name": "",
+          "is_public": "",
+          "url": ""
+      }
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: any
+    value: '""'
+meta:
+  workerGroup: default
+  description: This flow transform the certificate data for ingesting in IBM Concert
+  layout: flow
+  version: 5
+finally: null

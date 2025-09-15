@@ -1,0 +1,225 @@
+name: Discover_Public_Access_Points_From_Kubernetes_And_OCP
+platform: node
+blocks:
+  - action: if
+    name: CheckNamespaceAndEnvironment
+    condition: $namespaces.length > 0 && $envName != "" && $apiServer != ""
+    then:
+      - action: foreach
+        name: LoopNamespaces
+        list: $namespaces
+        blocks:
+          - action: switch
+            name: SwitchSystemType
+            expression: $systemType
+            cases:
+              - value: '"kubernetes"'
+                blocks:
+                  - action: comment
+                    value: Fetch the list of Ingress
+                  - action: system/Kubernetes/KubernetesHttpRequest
+                    name: GetIngressList
+                    inputs:
+                      - name: authKey
+                        value: $serviceAuth
+                      - name: method
+                        value: '"GET"'
+                      - name: path
+                        value: "`/apis/networking.k8s.io/v1/namespaces/${$LoopNamespaces.item}/ingresses`"
+                  - action: assign
+                    name: AssignIngressList
+                    variable: $resourceList
+                    value: $GetIngressList.result.items
+              - value: '"ocp"'
+                blocks:
+                  - action: comment
+                    value: Fetch the list of Routes
+                  - action: system/OpenShift/Route Openshift Io/List Route Openshift
+                      Io Namespaced Route
+                    name: GetRoutesList
+                    inputs:
+                      - name: authKey
+                        value: $serviceAuth
+                      - name: namespace
+                        value: $LoopNamespaces.item
+                  - action: assign
+                    name: AssignRouteList
+                    variable: $resourceList
+                    value: $GetRoutesList.result.items
+            default:
+              - action: assign
+                name: InvalidSysTypeErr
+                variable: $result
+                value: |-
+                  {
+                      "error": "invalid system type"
+                  }
+              - action: exit
+          - action: comment
+            value: Certificate data creation
+          - action: foreach
+            name: CreateCertificatePayload
+            list: $resourceList
+            blocks:
+              - action: ./Create_Certificate_For_OCP_Kubernetes
+                name: CreateCertPayload
+                inputs:
+                  - name: namespaceResource
+                    value: $CreateCertificatePayload.item
+                  - name: defaultPort
+                    value: $defaultPort
+                  - name: apiServer
+                    value: $apiServer
+                  - name: certificateArr
+                    value: $certificateArr
+                  - name: systemType
+                    value: $systemType
+                  - name: envName
+                    value: $envName
+                  - name: namespace
+                    value: $LoopNamespaces.item
+      - action: comment
+        value: Ingest data to IBM Concert
+      - action: system/IBM/Concert/Import Data/Upload Files to Concert
+        name: LoadDataToConcert
+        inputs:
+          - name: authKey
+            value: $concertAuth
+          - name: file
+            value: |-
+              {
+                  "data_type": "certificate",
+                  "filename": JSON.stringify($certificateArr)
+              }
+          - name: fileType
+            value: '"json"'
+      - action: assign
+        name: LoadDataToConcertResult
+        variable: $result
+        value: $LoadDataToConcert.result
+    else:
+      - action: assign
+        name: NamespaceOrEnvironmentErr
+        variable: $result
+        value: |-
+          {
+              "error": "namespace or environment name or api server is not provided"
+          }
+      - action: exit
+variables:
+  - name: concertAuth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"Hub"'
+    meta:
+      authType: IBM/ConcertAPIKey
+      subType: authentication
+  - name: serviceAuth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"ibmconcert/qotd"'
+    meta:
+      authType: Kubernetes
+      subType: authentication
+  - name: namespaces
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: array
+    value: "[\"qotd\"]"
+  - name: envName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"Quote-of-the-Day"'
+  - name: systemType
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+      enum:
+        - ocp
+        - kubernetes
+    value: '"kubernetes"'
+  - name: apiServer
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"https://jeremy-qotd.palsys.com.tw:6443"'
+  - name: routes
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: array
+    value: "[]"
+  - name: resourceList
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: array
+    value: "[]"
+  - name: defaultPort
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "6443"
+  - name: certificateArr
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: |-
+      {
+          "components": [],
+          "dependencies": [{
+              "ref": "environment:",
+              "depends_on": []
+          }]
+      }
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+meta:
+  workerGroup: default
+  description: "This flow discovers Public Access Point data from Kubernetes and OCP,\
+    \ transforms the data and ingests the data to IBM Concert"
+  layout: flow
+  version: 5
+  tags:
+    - name: Consumer
+      value: Concert
+    - name: Category
+      value: Certificates
+finally: null
