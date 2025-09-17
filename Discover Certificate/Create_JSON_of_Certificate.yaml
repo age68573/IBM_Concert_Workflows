@@ -1,0 +1,226 @@
+name: Create_JSON_of_Certificate
+platform: node
+blocks:
+  - action: if
+    name: checkEnvName
+    condition: $env_name != ""
+    then:
+      - action: assign
+        name: assignEnv
+        variable: "$result.dependencies[0].ref"
+        value: '"environment:" + $env_name'
+    else: []
+  - name: Function_1
+    function: "const jsonString = $certificates.join(\"\\n\");\n$newcertificates =\
+      \ JSON.parse(jsonString);\n\n "
+    skipped: true
+  - action: foreach
+    name: foreachCertificates
+    list: $certificates
+    blocks:
+      - action: system/Common/Status Message Update
+        name: StatusMessageUpdate_Checking_Metadata_1
+        inputs:
+          - name: message
+            value: '"Converting certificate "+$foreachCertificates.index+" out of
+              "+$foreachCertificates.count+"..."'
+      - name: Function_2
+        function: $isca = $foreachCertificates.item.CertificateType === "CA";
+      - action: assign
+        name: Assign_1
+        value: |-
+          {
+              "rna": true,
+              "alias": $foreachCertificates.item.alias,
+              "api_server" : $api_server,
+              "isca": $isca
+          }
+        variable: $tempRnaMetadata
+      - name: utcDT
+        function: |
+          const validFrom = $foreachCertificates.item.validFrom ? convertDateToUTC($foreachCertificates.item.validFrom) : null;
+          const validTo = $foreachCertificates.item.validTo ? convertDateToUTC($foreachCertificates.item.validTo) : null;
+
+          $tempUtc = [validFrom, validTo];
+
+          function convertDateToUTC(dateString) {
+              if (!dateString) {
+                  return null;
+              }
+
+              const dt = new Date(dateString); // This will handle time zone conversion automatically
+
+              if (isNaN(dt.getTime())) {
+                  return null; // Invalid date
+              }
+
+              const year = dt.getUTCFullYear();
+              const month = String(dt.getUTCMonth() + 1).padStart(2, '0');
+              const day = String(dt.getUTCDate()).padStart(2, '0');
+              const hours = String(dt.getUTCHours()).padStart(2, '0');
+              const minutes = String(dt.getUTCMinutes()).padStart(2, '0');
+              const seconds = String(dt.getUTCSeconds()).padStart(2, '0');
+
+              return `${year}-${month}-${day} ${hours}:${minutes}:${seconds} +0000 UTC`;
+          }
+      - action: system/Common/Array/Array Push
+        name: fillSBOMData
+        inputs:
+          - name: array
+            value: $result.components
+          - name: item
+            value: |-
+              {
+                  "type": "certificate",
+
+                  "ref": String(
+                      "certificate:" + ($foreachCertificates.item.serialNumber ? $foreachCertificates.item.serialNumber : "")
+                  ),
+                  "serial_number": $foreachCertificates.item.serialNumber ? $foreachCertificates.item.serialNumber : "",
+
+                  "properties": [{
+                      "name": "subject",
+                      "value": $foreachCertificates.item.subject ? $foreachCertificates.item.subject : ""
+                  }, {
+                      "name": "namespace",
+                      "value": $api_server ? $api_server : ""
+                  }, {
+                      "name": "issuer",
+                      "value": $foreachCertificates.item.issuer ? $foreachCertificates.item.issuer : ""
+                  }, {
+                      "name": "description",
+                      "value": $foreachCertificates.item.CertificateType ? $foreachCertificates.item.CertificateType : ""
+                  }, {
+                      "name": "certificate_type",
+                      "value": $foreachCertificates.item.CertificateType
+                  }, {
+                      "name": "validity_start_date",
+                      "value": $tempUtc[0]
+                  }, {
+                      "name": "validity_end_date",
+                      "value": $tempUtc[1]
+                  }, {
+                      "name": "dns_names",
+                      "value": $foreachCertificates.item.DnsNameList && $foreachCertificates.item.DnsNameList.length > 0 ? "\"" + $foreachCertificates.item.DnsNameList.join(", ") + "\"" : ""
+                  }, {
+                      "name": "metadata",
+                      "value": JSON.stringify($tempRnaMetadata)
+                  }, {
+                      "name": "additional_data",
+                      "value": $foreachCertificates.item.additional_data ? JSON.stringify($foreachCertificates.item.additional_data) : ""
+                  }]
+              }
+      - action: system/Common/Array/Array Push
+        name: addDependency
+        inputs:
+          - name: array
+            value: "$result.dependencies[0].depends_on"
+          - name: item
+            value: "String(\"certificate:\" + ($foreachCertificates.item.serialNumber\
+              \ ? $foreachCertificates.item.serialNumber : \"\"))"
+  - action: ./Ingest_JSON_Certificates_to_IBM Concert
+    name: ingest
+    inputs:
+      - name: auth
+        value: $concert_auth
+      - name: json
+        value: JSON.stringify($result)
+      - name: data_type
+        value: '"certificate"'
+  - action: assign
+    name: Assign_2
+    variable: $result
+    value: $ingest.result
+variables:
+  - name: certificates
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: array
+    value: "[]"
+  - name: tempUtc
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: array
+    value: "[]"
+  - name: tempRnaMetadata
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: |-
+      {
+          "rna": true,
+      }
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: |-
+      {
+          "components": [],
+          "dependencies": [{
+              "ref": "environment: $env_name",
+              "depends_on": []
+          }]
+      }
+  - name: concert_auth
+    required: false
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+    meta:
+      authType: Common/SSH
+      subType: authentication
+  - name: newcertificates
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: array
+    value: "[]"
+  - name: env_name
+    required: false
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: api_server
+    required: false
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '""'
+  - name: isca
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: boolean
+    value: "false"
+meta:
+  workerGroup: default
+  description: "Creates a JSON of  certificate, while converting timestamp from GMT\
+    \ to UTC"
+  layout: flow
+  version: 5
+finally: null
