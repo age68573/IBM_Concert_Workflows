@@ -1,0 +1,334 @@
+name: Instana_Resilence_QOTD
+platform: node
+blocks:
+  - action: comment
+    value: Fetch the time window for which metrics needs to be fetched
+  - action: ./FetchAssessmentTime
+    name: FetchTimeWindow
+    inputs:
+      - name: concertAPIKey
+        value: $concertApiKeyAuth
+      - name: concertConfigAuth
+        value: $concertConfigAuth
+      - name: applicationName
+        value: $applicationName
+      - name: profileName
+        value: $profileName
+      - name: origin
+        value: $origin
+      - name: origin_name
+        value: $originName
+      - name: defaultWindowSize
+        value: $defaultWindowSize
+  - name: Function_2
+    function: |-
+      $startTimestamp = $FetchTimeWindow.result.startTimestamp;
+      $endTimestamp = $FetchTimeWindow.result.endTimestamp;
+
+      if (isNaN($startTimestamp) || isNaN($endTimestamp)) {
+          $result = "Error";
+      } else {
+          $result = "Success";
+      }
+  - action: if
+    name: If_1
+    condition: $result === "Success"
+    then:
+      - action: ./Get_Instana_Metrics
+        name: FetchMetrics
+        inputs:
+          - name: applicationName
+            value: $applicationName
+          - name: endTimestamp
+            value: $endTimestamp
+          - name: instana_auth
+            value: $instanaAuth
+          - name: startTimestamp
+            value: $startTimestamp
+          - name: webApplicationName
+            value: $webApplicationName
+      - action: comment
+        value: Transform Instana metrics to Resilience API metric
+      - name: Function_1
+        function: |-
+          function findLowestValue(arr, property) {
+              const metricsArr = arr.reduce((acc, current) => {
+                  return acc.concat(current.metrics[0][property]);
+              }, []);
+
+              const lowest = metricsArr.reduce((min, current) => {
+                  return (current < min) ? current : min;
+              }, metricsArr[0]);
+
+              return lowest;
+          };
+
+          function isEmpty(value) {
+              return value === null || value === undefined || value === "" || (typeof value === "object" && Object.keys(value).length === 0);
+          }
+
+          function isNegative(num) {
+              return num < 0;
+          }
+
+          function processSLOMetrics(items) {
+              let latencyErrorBudgetRemaining = "";
+              let latencyTotalErrorBudget = "";
+              let availabilityErrorBudgetRemaining = "";
+              let availabilityTotalErrorBudget = "";
+
+              if (Array.isArray(items)) {
+                  items.forEach(dataObject => {
+                      const sloBluePrint = dataObject["sloConfig"]["indicator"]["blueprint"];
+
+                      if (sloBluePrint === "latency") {
+                          latencyErrorBudgetRemaining = dataObject["sloReport"]["errorBudgetRemaining"];
+                          latencyTotalErrorBudget = dataObject["sloReport"]["totalErrorBudget"];
+                      }
+
+                      if (sloBluePrint === "availability") {
+                          availabilityErrorBudgetRemaining = dataObject["sloReport"]["errorBudgetRemaining"];
+                          availabilityTotalErrorBudget = dataObject["sloReport"]["totalErrorBudget"];
+                      }
+                  });
+              }
+
+              return {
+                  "latencyErrorBudgetRemaining": latencyErrorBudgetRemaining,
+                  "latencyTotalErrorBudget": latencyTotalErrorBudget,
+                  "availabilityErrorBudgetRemaining": availabilityErrorBudgetRemaining,
+                  "availabilityTotalErrorBudget": availabilityTotalErrorBudget
+              };
+          }
+
+          function transformMetrics(input) {
+              let lowestSuccessRate = "";
+
+              if (input.synthetic_metrics.metricsResult.length !== 0) {
+                  lowestSuccessRate = String(
+                      findLowestValue(input.synthetic_metrics.metricsResult, "synthetic.successRate")
+                  );
+              }
+
+              const out = processSLOMetrics(input.slo_metrics.items);
+              let pct_slo_latency_errorbudget = "";
+              let pct_slo_error_rate_errorbudget = "";
+
+              if (!isEmpty(out.latencyErrorBudgetRemaining) && !isEmpty(out.latencyTotalErrorBudget)) {
+                  pct_slo_latency_errorbudget = String(
+                      (parseInt(out.latencyErrorBudgetRemaining) / parseInt(out.latencyTotalErrorBudget)) * 100
+                  );
+              }
+
+              if (!isEmpty(out.availabilityErrorBudgetRemaining) && !isEmpty(out.availabilityTotalErrorBudget)) {
+                  pct_slo_error_rate_errorbudget = String(
+                      (parseInt(out.availabilityErrorBudgetRemaining) / parseInt(out.availabilityTotalErrorBudget)) * 100
+                  );
+              }
+
+              let data = {};
+
+              if (!isEmpty(lowestSuccessRate)) {
+                  data["pct_availability_by_synthetic_tests"] = lowestSuccessRate;
+                  data["pct_availability_by_region_by_synthetic_tests"] = lowestSuccessRate;
+              }
+
+              if (input.application_metrics.items.length !== 0) {
+                  const errorRate = (input.application_metrics.items[0].metrics["errors.mean"][0][1] * 100);
+                  data["pct_availability_by_error_rate"] = String(errorRate);
+                  data["pct_availability_by_region_by_error_rate"] = String(errorRate);
+                  data["pct_slo_error_rate"] = String(errorRate);
+                  data["num_throughput_transactions"] = String(input.application_metrics.items[0].metrics["calls.per_second"][0][1]);
+                  data["ms_slo_latency"] = String(input.application_metrics.items[0].metrics["latency.mean"][0][1]);
+              }
+
+              data["num_throughput_visits"] = String(input.website_metrics.metrics["pageViews.sum"][0][1]);
+
+              if (!isEmpty(pct_slo_error_rate_errorbudget) && !isNegative(pct_slo_error_rate_errorbudget)) {
+                  data["pct_slo_error_rate_errorbudget"] = pct_slo_error_rate_errorbudget;
+              }
+
+              if (!isEmpty(pct_slo_latency_errorbudget) && !isNegative(pct_slo_latency_errorbudget)) {
+                  data["pct_slo_latency_errorbudget"] = pct_slo_latency_errorbudget;
+              }
+
+              return data;
+          }
+
+          $result = transformMetrics($FetchMetrics.result)
+      - action: comment
+        value: |-
+          Generate assessment
+           for the application
+      - action: ./LoadAssessments
+        name: LoadAssessments
+        inputs:
+          - name: applicationName
+            value: $applicationName
+          - name: profileName
+            value: $profileName
+          - name: data
+            value: $result
+          - name: timestamp
+            value: $endTimestamp
+          - name: concert_config_auth
+            value: $concertConfigAuth
+          - name: origin_name
+            value: $originName
+          - name: origin_url
+            value: $originUrl
+          - name: concert_api_key_auth
+            value: $concertApiKeyAuth
+          - name: applicationVersion
+            value: $applicationVersion
+          - name: origin
+            value: $origin
+      - action: assign
+        name: Assign_1
+        value: |-
+          {
+              "response": $LoadAssessments.result,
+              "assessment_data": $LoadAssessments.assessment_data
+          }
+        variable: $result
+    else:
+      - action: assign
+        name: Assign_2
+        variable: $result
+        value: |-
+          {
+              "status": "Error",
+              "message": "Error while fetching assesment time window"
+          }
+variables:
+  - name: result
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: object
+    value: "{}"
+  - name: applicationName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"QOTD"'
+  - name: instanaAuth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"Instana"'
+  - name: webApplicationName
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"QOTD-web"'
+  - name: concertConfigAuth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"Config_Data"'
+    meta:
+      authType: Common/ConfigData
+      subType: authentication
+  - name: profileName
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"Instana Availability NFRs"'
+  - name: concertApiKeyAuth
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"Concert_API"'
+    meta:
+      authType: Common/APIKey
+      subType: authentication
+  - name: originName
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"Instana"'
+  - name: originUrl
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"https://it-palsys.instana-k3s.palsys.com.tw/#/application;appId=ZO1xlAj_QL-xC675FyOwMA/summary;callsTab=http;latencyTab=overTime?timeline.to&timeline.fm&timeline.ar=true&timeline.ws=60000&deployment.page=1"'
+  - name: applicationVersion
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"1.0.0"'
+  - name: origin
+    required: false
+    isInput: false
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: string
+    value: '"APM"'
+  - name: startTimestamp
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "0"
+  - name: endTimestamp
+    required: false
+    isInput: false
+    isOutput: true
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "0"
+  - name: defaultWindowSize
+    required: true
+    isInput: true
+    isOutput: false
+    level: INTERMEDIATE
+    type:
+      type: number
+    value: "3600000"
+meta:
+  workerGroup: default
+  description: "This workflow retrieves performance metrics from Instana over a specified\
+    \ time period, calculates availability and error rates, and sends the processed\
+    \ data to the Concert Resilience evaluation API. "
+  layout: flow
+  version: 5
+  tags:
+    - name: Consumer
+      value: Concert
+    - name: Category
+      value: Resilience
+finally: null
